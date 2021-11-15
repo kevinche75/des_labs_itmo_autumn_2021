@@ -80,10 +80,10 @@ void switchGreen(int set, int time){
 void blink(int pin, int time, int period){
     if (pin!= RED && pin!=YELLOW && pin!= GREEN)
         return;
-    for (int i = period; i <= time; i+=period) {
+//    for (int i = period; i <= time; i+=period) {
         HAL_GPIO_TogglePin(GPIOD, pin);
-        HAL_Delay(period);
-    }
+//        HAL_Delay(period);
+//    }
 }
 
 void waitForPressBtn(int time){
@@ -96,6 +96,10 @@ void waitForPressBtn(int time){
         	return;
         }
     }
+}
+
+long getCurrentTime(){
+    return HAL_GetTick();
 }
 /* USER CODE END 0 */
 
@@ -115,7 +119,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  long time;
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -135,12 +139,39 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  switchGreen(1, 5000);
-	  blink(GREEN, 5000, 500);
+//      switchGreen(1, 5000);
+	  switchGreen(1, 0);
+      time = getCurrentTime();
+      while (getCurrentTime() - time < 5000){
+
+      }
+      time = getCurrentTime();
+      while (getCurrentTime() - time < 5000){
+          if (time % 500 == 0){
+              blink(GREEN, 0, 0);
+          }
+      }
+//	  blink(GREEN, 5000, 500);
 	  switchGreen(0, 0);
-	  switchRedYellow(YELLOW, 5000);
+//	  switchRedYellow(YELLOW, 5000);
+      switchRedYellow(YELLOW, 0);
+      time = getCurrentTime();
+      while (getCurrentTime() - time < 5000){
+
+      }
 	  switchRedYellow(RED, 0);
-	  waitForPressBtn(10000);
+//      waitForPressBtn(10000);
+      time = getCurrentTime();
+      int pressed = 0;
+      while (getCurrentTime() - time < 10000){
+              if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) == GPIO_PIN_RESET){
+                  pressed = 1;
+              }
+              if (pressed){
+                  if (getCurrentTime() - time >= 7500)
+                      break;
+              }
+      }
 	  switchRedYellow(CLEAN, 0);
     /* USER CODE END WHILE */
 
