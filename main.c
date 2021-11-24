@@ -67,7 +67,8 @@ void SystemClock_Config(void);
 int ignoreBtn = 0;
 int timeout = 10000;
 int interrupt = 0;
-char *msg = "";
+char msg[200] = "";
+char ch ='f';
 
 void switchRedYellow(int pin) {
     if (pin!= RED && pin!=YELLOW && pin!= CLEAN)
@@ -109,8 +110,8 @@ long getCurrentTime(){
 }
 
 char* help(){
-    char* message = "";
-    char* buf;
+    char message[200] = "";
+    char buf[20] = "";
     if(HAL_GPIO_ReadPin(GPIOD,RED) == SET)
         strcat(message,"RED\n");
     else if(HAL_GPIO_ReadPin(GPIOD,YELLOW) == SET)
@@ -131,38 +132,46 @@ char* help(){
 
     if (interrupt)
         HAL_UART_Transmit_IT(&huart6, (uint8_t*)message, sizeof message);
-    else
-        HAL_UART_Transmit(&huart6, (uint8_t*)message, sizeof message, 100);
+      else {
+    	        long time = getCurrentTime();
+    	        HAL_StatusTypeDef isReaded1 = HAL_BUSY;
+    	        int curtime = getCurrentTime();
+    	        int counter = 0;
+    	        while (counter < 100000 && isReaded1 == HAL_BUSY) {
+    	        	isReaded1 = HAL_UART_Transmit_IT(&huart6, (uint8_t *) message, sizeof message);
+    	        	curtime = getCurrentTime();
+    	        	counter++;
+    	                }
+    	    }
 
 }
-
 void handleMessage(char *message){
     char* response;
-    if (!strcmp(message, "?"))
+    if (!strcmp(message, "?\n"))
         strcpy(response,help());
     else
-    if (!strcmp(message, "set mode 1")) {
+    if (!strcmp(message, "set mode 1\n")) {
         ignoreBtn = 0;
         strcpy(response,"OK");
     }
     else
-    if (!strcmp(message, "set mode 2")) {
+    if (!strcmp(message, "set mode 2\n")) {
         ignoreBtn = 1;
         strcpy(response,"OK");
     }
     else
-    if (!strcmp(message, "set interrupts on")) {
+    if (!strcmp(message, "set interrupts on\n")) {
         interrupt = 1;
         strcpy(response,"OK");
     }
     else
-    if (!strcmp(message, "set interrupts off")) {
+    if (!strcmp(message, "set interrupts off\n")) {
         interrupt = 0;
         strcpy(response,"OK");
     }
     else
-    if (!strncmp(message,"set timeout",11)){
-        timeout = strtol(&message[11],0,10);
+    if (!strncmp(message,"set timeout\n",11)){
+        timeout = strtol(&message[11],0,10) * 1000;
         strcpy(response,"OK");
     }
     else
@@ -171,8 +180,7 @@ void handleMessage(char *message){
     if (interrupt)
         HAL_UART_Transmit_IT(&huart6, (uint8_t*)response, sizeof message);
     else
-        HAL_UART_Transmit(&huart6, (uint8_t*)response, sizeof message, 100)
-
+        HAL_UART_Transmit(&huart6, (uint8_t*)response, sizeof message, 100);
 }
 /* USER CODE END 0 */
 
@@ -192,7 +200,8 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  long time;
+  long time = 0;
+  int i = 0;
 
 
   HAL_StatusTypeDef status = HAL_BUSY;
@@ -216,65 +225,86 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      switchGreen(1);
-      time = getCurrentTime();
-      while (getCurrentTime() - time < timeout/2){
-          if (!interrupt)
-              status = HAL_UART_Receive(&huart6, (uint8_t *) & msg, 1, 200);
-          else
-              status = HAL_UART_Receive_IT(&huart6, (uint8_t *) & msg, 1);
+  switchGreen(1);
+	        time = getCurrentTime();
+	        while (getCurrentTime() - time < timeout/2){
+	            if (!interrupt)
+	                status = HAL_UART_Receive(&huart6, (uint8_t *) &msg[i], 1, 200);
+	            else
+	                status = HAL_UART_Receive_IT(&huart6, (uint8_t *) &msg[i], 1);
 
-          if (status == HAL_OK)
-              handleMessage(status)
+	            if (status == HAL_OK){
+	            	if (msg[i]=='\n'){
+	            	 handleMessage(msg);
+	            	 i=0;
+	            	}
+	            }
 
-      }
-      time = getCurrentTime();
-      long current = time;
-      while ((current = getCurrentTime()) - time < timeout/2){
-          if (current-time % timeout/10 >= timeout/20)
-              blink(GREEN);
-          if (!interrupt)
-              status = HAL_UART_Receive(&huart6, (uint8_t *) &msg, 1, 200);
-          else
-              status = HAL_UART_Receive_IT(&huart6, (uint8_t *) &msg, 1);
 
-          if (status == HAL_OK)
-              handleMessage(msg);
-      }
+	        }
+	        time = getCurrentTime();
+	        long current = time;
+	        while ((current = getCurrentTime()) - time < timeout/2){
+	            if (current-time % timeout/10 >= timeout/20)
+	                blink(GREEN);
+	            if (!interrupt)
+	                status = HAL_UART_Receive(&huart6, (uint8_t *) &msg[i], 1, 200);
+	            else
+	                status = HAL_UART_Receive_IT(&huart6, (uint8_t *) &msg[i], 1);
 
-	  switchGreen(CLEAN);
+	            if (status == HAL_OK){
+	           	            	if (msg[i]=='\n'){
+	           	            	 handleMessage(msg);
+	           	            	 i=0;
+	           	            	}
+	            }
 
-      switchRedYellow(YELLOW);
-      time = getCurrentTime();
-      while (getCurrentTime() - time < timeout/2){
-          if (!interrupt)
-              status = HAL_UART_Receive(&huart6, (uint8_t *) &msg, 1, 200);
-          else
-              status = HAL_UART_Receive_IT(&huart6, (uint8_t *) &msg, 1);
 
-          if (status == HAL_OK)
-              handleMessage(msg);
-      }
+	        }
 
-	  switchRedYellow(RED);
-      time = getCurrentTime();
-      int pressed = 0;
-      while (getCurrentTime() - time < timeout){
-              if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) == GPIO_PIN_RESET)
-                  pressed = 1;
+	  	  switchGreen(CLEAN);
 
-              if (!ignoreBtn && pressed)
-                  if (getCurrentTime() - time >= timeout*3/4)
-                      break;
-          if (!interrupt)
-              status = HAL_UART_Receive(&huart6, (uint8_t *) &msg, 1, 200);
-          else
-              status = HAL_UART_Receive_IT(&huart6, (uint8_t *) &msg, 1);
+	        switchRedYellow(YELLOW);
+	        time = getCurrentTime();
+	        while (getCurrentTime() - time < timeout/2){
+	            if (!interrupt)
+	                status = HAL_UART_Receive(&huart6, (uint8_t *) &msg[i], 1, 200);
+	            else
+	                status = HAL_UART_Receive_IT(&huart6, (uint8_t *) &msg[i], 1);
 
-          if (status == HAL_OK)
-              handleMessage(msg);
-      }
-	  switchRedYellow(CLEAN);
+	            if (status == HAL_OK){
+	           	            	if (msg[i]=='\n'){
+	           	            	 handleMessage(msg);
+	           	            	 i=0;
+	           	            	}
+	           	            }
+
+	        }
+
+	  	  switchRedYellow(RED);
+	        time = getCurrentTime();
+	        int pressed = 0;
+	        while (getCurrentTime() - time < timeout){
+	                if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) == GPIO_PIN_RESET)
+	                    pressed = 1;
+
+	                if (!ignoreBtn && pressed)
+	                    if (getCurrentTime() - time <= timeout*3/4)
+	                        break;
+	            if (!interrupt)
+	                status = HAL_UART_Receive(&huart6, (uint8_t *) &msg[i], 1, 200);
+	            else
+	                status = HAL_UART_Receive_IT(&huart6, (uint8_t *) &msg[i], 1);
+
+	            if (status == HAL_OK){
+	           	            	if (msg[i]=='\n'){
+	           	            	 handleMessage(msg);
+	           	            	 i=0;
+	           	            	}
+	           	            }
+
+	        }
+	  	  switchRedYellow(CLEAN);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
