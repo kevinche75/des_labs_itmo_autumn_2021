@@ -68,6 +68,7 @@ int interrupt = 0;
 char ch[] = "F\0";
 int canReceive = 1;
 int writeSuccess = 0;
+uint32_t pmask;
 
 void switchRedYellow(int pin) {
     if (pin!= RED && pin!=YELLOW && pin!= CLEAN)
@@ -132,11 +133,14 @@ void handleMessage(char *message){
     else
     if (!strcmp(message, "set interrupts on\r")) {
         interrupt = 1;
+        __set_PRIMASK(pmask);
         strcpy(response,"OK\n\r");
     }
     else
     if (!strcmp(message, "set interrupts off\r")) {
         interrupt = 0;
+        pmask = __get_PRIMASK();
+        __disable_irq();
         strcpy(response,"OK\n\r");
     }
     else
@@ -332,13 +336,20 @@ int main(void)
 	  	  	  switchRedYellow(RED);
 	  	        time = getCurrentTime();
 	  	        int pressed = 0;
+	  	        int wait = 0;
 	  	        while (getCurrentTime() - time < timeout) {
 	                  if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) == GPIO_PIN_RESET)
 	                      pressed = 1;
 
 	                  if (!ignoreBtn && pressed)
-	                      if (getCurrentTime() - time <= timeout * 3 / 4)
-	                          break;
+	                	  if (wait != 0) {
+	                		  if (getCurrentTime() - time >= wait + timeout * 1/4){
+	                			  break;
+	                		  }
+	                	  } else {
+							  if (getCurrentTime() - time <= timeout * 3 / 4)
+								  wait = getCurrentTime() - time;
+						}
 
 	                  if (!interrupt){
 						  status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
