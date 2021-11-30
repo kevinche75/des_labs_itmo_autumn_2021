@@ -66,6 +66,8 @@ int ignoreBtn = 0;
 int timeout = 10000;
 int interrupt = 0;
 char ch[] = "F\0";
+int canReceive = 1;
+int writeSuccess = 0;
 
 void switchRedYellow(int pin) {
     if (pin!= RED && pin!=YELLOW && pin!= CLEAN)
@@ -156,16 +158,18 @@ void sendMessage(char *message) {
     if (!interrupt)
         HAL_UART_Transmit(&huart6, (uint8_t *) message, size, 100);
     else {
-        long time = getCurrentTime();
-        HAL_StatusTypeDef isReaded1 = HAL_BUSY;
-        int curtime = getCurrentTime();
-        int counter = 0;
-        while (counter < 100000 && isReaded1 == HAL_BUSY) {
-        	isReaded1 = HAL_UART_Transmit_IT(&huart6, (uint8_t *) message, size);
-        	curtime = getCurrentTime();
-        	counter++;
-                }
+    	writeSuccess = 0;
+		HAL_UART_Transmit_IT(&huart6, (uint8_t *) message, size);
+        while (!writeSuccess){};
     }
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	canReceive=0;
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+	writeSuccess=1;
 }
 /* USER CODE END 0 */
 
@@ -212,50 +216,77 @@ int main(void)
 	  switchGreen(1);
 	  	        time = getCurrentTime();
 	  	        while (getCurrentTime() - time < timeout/2){
-	  	            if (!interrupt)
-	  	                status = HAL_UART_Receive(&huart6, (uint8_t *) &ch, 1, 200);
-	  	            else
-	  	                status = HAL_UART_Receive_IT(&huart6, (uint8_t *) &ch, 1);
+	  	        	if (!interrupt){
+					  status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
+					  if (status == HAL_OK) {
 
-	  	            if (status == HAL_OK) {
+						  sendMessage(ch);
+						  msg[i++]=ch[0];
+						  msg[i] = '\0';
 
-	  	            	sendMessage(ch);
-	  	            	msg[i++] = ch[0];
-	  	            	msg[i] = '\0';
+						  if (ch[0] == '\r') {
+							  handleMessage(msg);
+							  msg[0] = '\0';
+							  i = 0;
+						  }
+					  }
+				  }
+				  else
+				  {
+					  if (canReceive){
+						  status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
+					  } else {
+						  sendMessage(ch);
+						  msg[i++]=ch[0];
+						  msg[i] = '\0';
 
-	                      if (ch[0] == '\r') {
-	                          handleMessage(msg);
-	                          msg[0] = '\0';
-	                          i = 0;
-	                      }
-	                  }
-
-
+						  if (ch[0] == '\r') {
+							  handleMessage(msg);
+							  msg[0] = '\0';
+							  i = 0;
+						  }
+						  canReceive = 1;
+					  }
+				  }
 	  	        }
+
 	  	        time = getCurrentTime();
 	  	        long current = time;
 	  	        while ((current = getCurrentTime()) - time < timeout/2) {
 	                  if (current - time % timeout / 10 >= timeout / 20)
 	                      blink(GREEN);
-	                  if (!interrupt)
+	                  if (!interrupt){
 	                      status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
-	                  else
-	                      status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
+	                      if (status == HAL_OK) {
 
-	                  if (status == HAL_OK) {
+							  sendMessage(ch);
+							  msg[i++]=ch[0];
+							  msg[i] = '\0';
 
-	                	  sendMessage(ch);
-	                	  msg[i++]=ch[0];
-	                	  msg[i] = '\0';
-
-	                      if (ch[0] == '\r') {
-	                          handleMessage(msg);
-	                          msg[0] = '\0';
-	                          i = 0;
+							  if (ch[0] == '\r') {
+								  handleMessage(msg);
+								  msg[0] = '\0';
+								  i = 0;
+							  }
 	                      }
 	                  }
+	                  else
+	                  {
+	                	  if (canReceive){
+	                		  status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
+	                	  } else {
+	                		  sendMessage(ch);
+							  msg[i++]=ch[0];
+							  msg[i] = '\0';
 
-
+							  if (ch[0] == '\r') {
+								  handleMessage(msg);
+								  msg[0] = '\0';
+								  i = 0;
+							  }
+							  canReceive = 1;
+	                	  }
+	                  }
 	              }
 
 	  	  	  switchGreen(CLEAN);
@@ -263,23 +294,38 @@ int main(void)
 	  	        switchRedYellow(YELLOW);
 	  	        time = getCurrentTime();
 	  	        while (getCurrentTime() - time < timeout/2) {
-	                  if (!interrupt)
-	                      status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
-	                  else
-	                      status = HAL_UART_Receive_IT(&huart6, (uint8_t * ) ch, 1);
+	  	        	if (!interrupt){
+						  status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
+						  if (status == HAL_OK) {
 
-	                  if (status == HAL_OK) {
+							  sendMessage(ch);
+							  msg[i++]=ch[0];
+							  msg[i] = '\0';
 
-	                	  sendMessage(ch);
-	                	  msg[i++] = ch[0];
-	                	  msg[i] = '\0';
+							  if (ch[0] == '\r') {
+								  handleMessage(msg);
+								  msg[0] = '\0';
+								  i = 0;
+							  }
+						  }
+					  }
+					  else
+					  {
+						  if (canReceive){
+							  status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
+						  } else {
+							  sendMessage(ch);
+							  msg[i++]=ch[0];
+							  msg[i] = '\0';
 
-	                      if (ch[0] == '\r') {
-	                          handleMessage(msg);
-	                          msg[0] = '\0';
-	                          i = 0;
-	                      }
-	                  }
+							  if (ch[0] == '\r') {
+								  handleMessage(msg);
+								  msg[0] = '\0';
+								  i = 0;
+							  }
+							  canReceive = 1;
+						  }
+					  }
 
 	              }
 
@@ -294,24 +340,38 @@ int main(void)
 	                      if (getCurrentTime() - time <= timeout * 3 / 4)
 	                          break;
 
-	                  if (!interrupt)
-	                      status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
-	                  else
-	                      status = HAL_UART_Receive_IT(&huart6, (uint8_t * ) ch, 1);
+	                  if (!interrupt){
+						  status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
+						  if (status == HAL_OK) {
 
-	                  if (status == HAL_OK) {
+							  sendMessage(ch);
+							  msg[i++]=ch[0];
+							  msg[i] = '\0';
 
-	                	  sendMessage(ch);
-	                	  msg[i++] = ch[0];
-	                	  msg[i] = '\0';
+							  if (ch[0] == '\r') {
+								  handleMessage(msg);
+								  msg[0] = '\0';
+								  i = 0;
+							  }
+						  }
+					  }
+					  else
+					  {
+						  if (canReceive){
+							  status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
+						  } else {
+							  sendMessage(ch);
+							  msg[i++]=ch[0];
+							  msg[i] = '\0';
 
-	                      if (ch[0] == '\r') {
-	                          handleMessage(msg);
-	                          msg[0] = '\0';
-	                          i = 0;
-	                      }
-	                  }
-
+							  if (ch[0] == '\r') {
+								  handleMessage(msg);
+								  msg[0] = '\0';
+								  i = 0;
+							  }
+							  canReceive = 1;
+						  }
+					  }
 	              }
 	  	  	  switchRedYellow(CLEAN);
     /* USER CODE END WHILE */
