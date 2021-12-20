@@ -24,7 +24,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "kb.h"
+#include "sound_driver.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,13 +36,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define CLEAN 0
-#define RED GPIO_PIN_15
-#define YELLOW  GPIO_PIN_14
-#define GREEN GPIO_PIN_13
 
-#define  SET GPIO_PIN_SET
-#define  RESET GPIO_PIN_RESET
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -62,118 +58,202 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-int ignoreBtn = 0;
-int timeout = 10000;
-int interrupt = 0;
-char ch[] = "F\0";
-int canReceive = 1;
-int writeSuccess = 0;
-uint32_t pmask;
 
-void switchRedYellow(int pin) {
-    if (pin!= RED && pin!=YELLOW && pin!= CLEAN)
-        return;
-    HAL_GPIO_WritePin(GPIOD, RED, pin == RED ? SET:RESET);
-    HAL_GPIO_WritePin(GPIOD, YELLOW, pin == YELLOW? SET: RESET);
+uint16_t notes = [32, 262, 294, 330, 349, 392, 440, 494];
+int all_notes_playing = 0;
+int current_note = -1;
+
+uint8_t buffer[BUFFER_SIZE];
+size_t write_pointer = 0;
+size_t read_pointer = 0;
+
+int mode = 1;
+int short_press_time = 200;
+int is_pressed_button = 0;
+long start_time_pressed_button = 0;
+int octave = 0;
+int duration = 1000;
+long note_start_time = 0;
+
+void buffer_init() {
+    for (size_t i = 0; i < BUFFER_SIZE; ++i)
+        buffer[i] = 0;
 }
 
-
-void switchGreen(int set){
-    HAL_GPIO_WritePin(GPIOD,GREEN, set ? SET : RESET);
+void buffer_add(uint8_t num) {
+    buffer[write_pointer] = num;
+    write_pointer = (write_pointer + 1) % BUFFER_SIZE;
 }
 
+int buffer_read() {
+    if (read_pointer == write_pointer) {
+        return -1;
+    }
+    uint8_t num = buffer[read_pointer];
+    read_pointer = (read_pointer + 1) % BUFFER_SIZE;
+    return num;
+}
+
+void keyboard_read(void) {
+//    static uint8_t const rows[4] = { 0xF7, 0x7B, 0x3D, 0x1E };
+    static uint8_t const rows[4] = {0x1E, 0x3D, 0x7B, 0xF7};
+    static int current_row = 0;
+    static int row_result[4] = {0, 0, 0, 0};
+
+    if (ks_state == 0) {
+        if (row_result[current_row] != ks_result) {
+            uint8_t keyNum = 0;
+            if (ks_result & 1) {
+                buffer_add(3 * current_row + 3);
+            }
+            if (ks_result & 2) {
+                buffer_add(3 * current_row + 2);
+            }
+            if (ks_result & 4) {
+                buffer_add(3 * current_row + 1);
+            }
+        }
+
+        row_result[current_row] = ks_result;
+        current_row = (current_row + 1) % 4;
+        ks_current_row = rows[current_row];
+        ks_continue();
+    }
+}
+
+void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    if (hi2c == &hi2c1 && ks_state) {
+        ks_continue();
+    }
+}
+
+void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
+    if (hi2c == &hi2c1 && ks_state) {
+        ks_continue();
+    }
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM6) {
+        keyboard_read();
+    }
+}
+
+typedef enum {
+    INPUT_PORT = 0x00, //Read byte XXXX XXXX
+    OUTPUT_PORT = 0x01, //Read/write byte 1111 1111
+    POLARITY_INVERSION = 0x02, //Read/write byte 0000 0000
+    CONFIG = 0x03 //Read/write byte 1111 1111
+} pca9538_regs_t;
 
 
-void blink(int pin){
-    if (pin!= RED && pin!=YELLOW && pin!= GREEN)
-        return;
-//    for (int i = period; i <= time; i+=period) {
-        HAL_GPIO_TogglePin(GPIOD, pin);
-//        HAL_Delay(period);
-//    }
+
+void send_message(char *message) {
+    int size = strlen(message);
+    if (message[0] == '\r'){
+        send_message("\n");
+    }
+    HAL_UART_Transmit(&huart6, (uint8_t *) message, size, 100);
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+    canReceive=0;
+}
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+    writeSuccess=1;
 }
 
 long getCurrentTime(){
     return HAL_GetTick();
 }
 
-void help(char* message){
-    char buf[20] = "";
-    if(HAL_GPIO_ReadPin(GPIOD,RED) == SET)
-        strcat(message,"RED\n\r");
-    else if(HAL_GPIO_ReadPin(GPIOD,YELLOW) == SET)
-        strcat(message,"Yellow\n\r");
-    else if(HAL_GPIO_ReadPin(GPIOD,GREEN) == SET)
-        strcat(message,"Green\n\r");
-
-    strcat(message, "timeout ");
-    sprintf(buf,"%d\n\r", timeout);
-    strcat(message, buf);
-
-    strcat(message, "ignoreBtn ");
-    strcat(message, ignoreBtn ? "2\n\r" : "1\n\r");
-
-    strcat(message, !interrupt?"Polling\n\r":"Interrupt\n\r");
-}
-
-void handleMessage(char *message){
-    char response[300] = "";
-    if (!strcmp(message, "?\r"))
-        help(response);
-    else
-    if (!strcmp(message, "set mode 1\r")) {
-        ignoreBtn = 0;
-        strcpy(response,"OK\n\r");
-    }
-    else
-    if (!strcmp(message, "set mode 2\r")) {
-        ignoreBtn = 1;
-        strcpy(response,"OK\n\r");
-    }
-    else
-    if (!strcmp(message, "set interrupts on\r")) {
-        interrupt = 1;
-        __set_PRIMASK(pmask);
-        strcpy(response,"OK\n\r");
-    }
-    else
-    if (!strcmp(message, "set interrupts off\r")) {
-        interrupt = 0;
-        pmask = __get_PRIMASK();
-        __disable_irq();
-        strcpy(response,"OK\n\r");
-    }
-    else
-    if (!strncmp(message,"set timeout",11)){
-        timeout = strtol(&message[11],0,10) * 1000;
-        strcpy(response,"OK\n\r");
-    }
-    else
-        strcpy(response,"ERROR\n\r");
-
-    sendMessage(response);
-}
-
-void sendMessage(char *message) {
-	int size = strlen(message);
-	if (message[0] == '\r'){
-		sendMessage("\n");
-	}
-    if (!interrupt)
-        HAL_UART_Transmit(&huart6, (uint8_t *) message, size, 100);
-    else {
-    	writeSuccess = 0;
-		HAL_UART_Transmit_IT(&huart6, (uint8_t *) message, size);
-        while (!writeSuccess){};
+void check_pressed_button(){
+    if (!check_button()) {
+        if (!is_pressed_button) {
+            start_time_pressed_button = getCurrentTime();
+            is_pressed_button = 1;
+        }
+    } else {
+        if (is_pressed_button && getCurrentTime() - start_time_pressed_button > short_press_time) {
+            if (mode == 1) {
+                mode = 0;
+                send_message("Debug mode");
+            } else {
+                mode = 1;
+                send_message("Run mode");
+            }
+            sound_driver_volume_mute();
+        }
+        is_pressed_button = 0;
     }
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	canReceive=0;
+void handle_note(int pressed_key){
+    current_note = pressed_key - 1;
+    all_notes_playing = 0;
+    note_start_time = getCurrentTime();
 }
 
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-	writeSuccess=1;
+void handle_octave(int value){
+    if (octave == -4 && value < 0 || octave == 4 && value > 0)
+        return;
+    octave += value;
+}
+
+void handle_duration(int value){
+    if (duration == 100 && value < 0 || duration == 10000 && value > 0)
+        return;
+    duration += value;
+}
+
+void handle_key(int pressed_key) {
+    if (pressed_key < 1 || pressed_key > 12)
+        return;
+    switch (pressed_key) {
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 5:
+        case 6:
+        case 7:
+            handle_note(pressed_key);
+            break;
+        case 8:
+            handle_octave(1);
+            break;
+        case 9:
+            handle_octave(-1);
+            break;
+        case 10:
+            handle_duration(100);
+            break;
+        case 11:
+            handle_duration(-100);
+            break;
+        case 12:
+            all_notes_playing = 1;
+            current_note = 0;
+    }
+}
+
+void all_notes_next(){
+    if (all_notes_playing) {
+        if (current_note == 6) {
+            current_note == -1;
+            all_notes_playing = 0;
+            return;
+        }
+        current_note += 1;
+        note_start_time = getCurrentTime();
+    }
+}
+
+int calc_frequency(){
+    if (current_note < 0)
+        return 1;
+    return notes[current_note] << octave;
 }
 /* USER CODE END 0 */
 
@@ -183,213 +263,69 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
   */
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
+    /* USER CODE BEGIN 1 */
 
-  /* USER CODE END 1 */
+    /* USER CODE END 1 */
 
-  /* MCU Configuration--------------------------------------------------------*/
+    /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+    HAL_Init();
 
-  /* USER CODE BEGIN Init */
-  long time;
-  char msg[200] = "";
-  int i = 0;
-   HAL_StatusTypeDef status = HAL_BUSY;
-  /* USER CODE END Init */
+    /* USER CODE BEGIN Init */
 
-  /* Configure the system clock */
-  SystemClock_Config();
+    /* USER CODE END Init */
 
-  /* USER CODE BEGIN SysInit */
+    /* Configure the system clock */
+    SystemClock_Config();
 
-  /* USER CODE END SysInit */
+    /* USER CODE BEGIN SysInit */
 
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_USART6_UART_Init();
-  /* USER CODE BEGIN 2 */
+    /* USER CODE END SysInit */
 
-  /* USER CODE END 2 */
+    /* Initialize all configured peripherals */
+    MX_GPIO_Init();
+    MX_USART6_UART_Init();
+    /* USER CODE BEGIN 2 */
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-	  switchGreen(1);
-	  	        time = getCurrentTime();
-	  	        while (getCurrentTime() - time < timeout/2){
-	  	        	if (!interrupt){
-					  status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
-					  if (status == HAL_OK) {
+    /* USER CODE END 2 */
 
-						  sendMessage(ch);
-						  msg[i++]=ch[0];
-						  msg[i] = '\0';
+    /* Infinite loop */
+    /* USER CODE BEGIN WHILE */
+    while (1)
+    {
+        int key_pressed = buffer_read();
 
-						  if (ch[0] == '\r') {
-							  handleMessage(msg);
-							  msg[0] = '\0';
-							  i = 0;
-						  }
-					  }
-				  }
-				  else
-				  {
-					  if (canReceive){
-						  status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
-					  } else {
-						  sendMessage(ch);
-						  msg[i++]=ch[0];
-						  msg[i] = '\0';
+        if (mode) {
+            if (key_pressed > 0 && key_pressed < 13) {
+                snprintf(message, sizeof(message), "Pressed key: %d\r\n", key_pressed);
+                send_message(message);
+            }
+            continue;
+        }
 
-						  if (ch[0] == '\r') {
-							  handleMessage(msg);
-							  msg[0] = '\0';
-							  i = 0;
-						  }
-						  canReceive = 1;
-					  }
-				  }
-	  	        }
+        handle_key(key_pressed);
 
-	  	        time = getCurrentTime();
-	  	        long current = time;
-	  	        while ((current = getCurrentTime()) - time < timeout/2) {
-	                  if (current - time % timeout / 10 >= timeout / 20)
-	                      blink(GREEN);
-	                  if (!interrupt){
-	                      status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
-	                      if (status == HAL_OK) {
+        if (current_note == -1){
+            note_start_time = getCurrentTime();
+        } else {
+            if (getCurrentTime() - note_start_time < duration) {
+                if (getCurrentTime() - note_start_time < duration * 0.9) {
+                    sound_driver_set_frequency(calc_frequency());
+                    sound_driver_volume_on();
+                } else
+                    sound_driver_volume_mute();
+            } else {
+                sound_driver_volume_mute();
+            }
+        }
 
-							  sendMessage(ch);
-							  msg[i++]=ch[0];
-							  msg[i] = '\0';
+        break;
+        /* USER CODE END WHILE */
 
-							  if (ch[0] == '\r') {
-								  handleMessage(msg);
-								  msg[0] = '\0';
-								  i = 0;
-							  }
-	                      }
-	                  }
-	                  else
-	                  {
-	                	  if (canReceive){
-	                		  status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
-	                	  } else {
-	                		  sendMessage(ch);
-							  msg[i++]=ch[0];
-							  msg[i] = '\0';
-
-							  if (ch[0] == '\r') {
-								  handleMessage(msg);
-								  msg[0] = '\0';
-								  i = 0;
-							  }
-							  canReceive = 1;
-	                	  }
-	                  }
-	              }
-
-	  	  	  switchGreen(CLEAN);
-
-	  	        switchRedYellow(YELLOW);
-	  	        time = getCurrentTime();
-	  	        while (getCurrentTime() - time < timeout/2) {
-	  	        	if (!interrupt){
-						  status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
-						  if (status == HAL_OK) {
-
-							  sendMessage(ch);
-							  msg[i++]=ch[0];
-							  msg[i] = '\0';
-
-							  if (ch[0] == '\r') {
-								  handleMessage(msg);
-								  msg[0] = '\0';
-								  i = 0;
-							  }
-						  }
-					  }
-					  else
-					  {
-						  if (canReceive){
-							  status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
-						  } else {
-							  sendMessage(ch);
-							  msg[i++]=ch[0];
-							  msg[i] = '\0';
-
-							  if (ch[0] == '\r') {
-								  handleMessage(msg);
-								  msg[0] = '\0';
-								  i = 0;
-							  }
-							  canReceive = 1;
-						  }
-					  }
-
-	              }
-
-	  	  	  switchRedYellow(RED);
-	  	        time = getCurrentTime();
-	  	        int pressed = 0;
-	  	        int wait = 0;
-	  	        while (getCurrentTime() - time < timeout) {
-	                  if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) == GPIO_PIN_RESET)
-	                      pressed = 1;
-
-	                  if (!ignoreBtn && pressed)
-	                	  if (wait != 0) {
-	                		  if (getCurrentTime() - time >= wait + timeout * 1/4){
-	                			  break;
-	                		  }
-	                	  } else {
-							  if (getCurrentTime() - time <= timeout * 3 / 4)
-								  wait = getCurrentTime() - time;
-						}
-
-	                  if (!interrupt){
-						  status = HAL_UART_Receive(&huart6, (uint8_t * ) ch, 1, 200);
-						  if (status == HAL_OK) {
-
-							  sendMessage(ch);
-							  msg[i++]=ch[0];
-							  msg[i] = '\0';
-
-							  if (ch[0] == '\r') {
-								  handleMessage(msg);
-								  msg[0] = '\0';
-								  i = 0;
-							  }
-						  }
-					  }
-					  else
-					  {
-						  if (canReceive){
-							  status = HAL_UART_Receive_IT(&huart6, (uint8_t * )ch, 1);
-						  } else {
-							  sendMessage(ch);
-							  msg[i++]=ch[0];
-							  msg[i] = '\0';
-
-							  if (ch[0] == '\r') {
-								  handleMessage(msg);
-								  msg[0] = '\0';
-								  i = 0;
-							  }
-							  canReceive = 1;
-						  }
-					  }
-	              }
-	  	  	  switchRedYellow(CLEAN);
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-  }
-  /* USER CODE END 3 */
+        /* USER CODE BEGIN 3 */
+    }
+    /* USER CODE END 3 */
 }
 
 /**
@@ -398,47 +334,47 @@ int main(void)
   */
 void SystemClock_Config(void)
 {
-  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Configure the main internal regulator output voltage
-  */
-  __HAL_RCC_PWR_CLK_ENABLE();
-  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 15;
-  RCC_OscInitStruct.PLL.PLLN = 216;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 4;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Activate the Over-Drive mode
-  */
-  if (HAL_PWREx_EnableOverDrive() != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+    /** Configure the main internal regulator output voltage
+    */
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+    /** Initializes the RCC Oscillators according to the specified parameters
+    * in the RCC_OscInitTypeDef structure.
+    */
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+    RCC_OscInitStruct.PLL.PLLM = 15;
+    RCC_OscInitStruct.PLL.PLLN = 216;
+    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+    RCC_OscInitStruct.PLL.PLLQ = 4;
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    /** Activate the Over-Drive mode
+    */
+    if (HAL_PWREx_EnableOverDrive() != HAL_OK)
+    {
+        Error_Handler();
+    }
+    /** Initializes the CPU, AHB and APB buses clocks
+    */
+    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                                  |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
-  {
-    Error_Handler();
-  }
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+    {
+        Error_Handler();
+    }
 }
 
 /* USER CODE BEGIN 4 */
@@ -451,13 +387,13 @@ void SystemClock_Config(void)
   */
 void Error_Handler(void)
 {
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
-  /* USER CODE END Error_Handler_Debug */
+    /* USER CODE BEGIN Error_Handler_Debug */
+    /* User can add his own implementation to report the HAL error return state */
+    __disable_irq();
+    while (1)
+    {
+    }
+    /* USER CODE END Error_Handler_Debug */
 }
 
 #ifdef  USE_FULL_ASSERT
