@@ -68,6 +68,7 @@ int current_note = -1;
 uint8_t buffer[BUFFER_SIZE];
 size_t write_pointer = 0;
 size_t read_pointer = 0;
+long prev_press = 0;
 
 int mode = 1;
 int short_press_time = 200;
@@ -97,6 +98,13 @@ int buffer_read() {
     return num;
 }
 
+int check_rattling(){
+	long curr_press = getCurrentTime();
+	int result = (curr_press - prev_press) > short_press_time;
+	prev_press = cur_press;
+	return result;
+}
+
 void keyboard_read(void) {
     static uint8_t const rows[4] = {0x1E, 0x3D, 0x7B, 0xF7};
     static int current_row = 0;
@@ -106,13 +114,16 @@ void keyboard_read(void) {
         if (row_result[current_row] != ks_result) {
             uint8_t keyNum = 0;
             if (ks_result & 1) {
-                buffer_add(3 * current_row + 3);
+            	if (check_rattling())
+            		buffer_add(3 * current_row + 3);
             }
             if (ks_result & 2) {
-                buffer_add(3 * current_row + 2);
+            	if (check_rattling())
+            		buffer_add(3 * current_row + 2);
             }
             if (ks_result & 4) {
-                buffer_add(3 * current_row + 1);
+            	if (check_rattling())
+            		buffer_add(3 * current_row + 1);
             }
         }
 
