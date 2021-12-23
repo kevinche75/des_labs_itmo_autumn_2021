@@ -11,5 +11,3 @@ void sound_driver_init(void);
 void sound_driver_set_frequency(uint16_t freq);
 void sound_driver_volume_on();
 void sound_driver_volume_mute();
-void sound_driver_play(int cur_melody,int cur_pause, int tempo);
-int wholeNote(int tempo);
