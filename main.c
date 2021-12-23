@@ -19,6 +19,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "i2c.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -36,7 +38,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -58,8 +59,9 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define BUFFER_SIZE 32
 
-uint16_t notes = [32, 262, 294, 330, 349, 392, 440, 494];
+uint32_t notes[] = {262, 294, 330, 349, 392, 440, 494};
 int all_notes_playing = 0;
 int current_note = -1;
 
@@ -74,6 +76,7 @@ long start_time_pressed_button = 0;
 int octave = 0;
 int duration = 1000;
 long note_start_time = 0;
+char message[150] = "";
 
 void buffer_init() {
     for (size_t i = 0; i < BUFFER_SIZE; ++i)
@@ -95,7 +98,6 @@ int buffer_read() {
 }
 
 void keyboard_read(void) {
-//    static uint8_t const rows[4] = { 0xF7, 0x7B, 0x3D, 0x1E };
     static uint8_t const rows[4] = {0x1E, 0x3D, 0x7B, 0xF7};
     static int current_row = 0;
     static int row_result[4] = {0, 0, 0, 0};
@@ -133,12 +135,6 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
     }
 }
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-    if (htim->Instance == TIM6) {
-        keyboard_read();
-    }
-}
-
 typedef enum {
     INPUT_PORT = 0x00, //Read byte XXXX XXXX
     OUTPUT_PORT = 0x01, //Read/write byte 1111 1111
@@ -156,14 +152,6 @@ void send_message(char *message) {
     HAL_UART_Transmit(&huart6, (uint8_t *) message, size, 100);
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    canReceive=0;
-}
-
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-    writeSuccess=1;
-}
-
 long getCurrentTime(){
     return HAL_GetTick();
 }
@@ -178,10 +166,10 @@ void check_pressed_button(){
         if (is_pressed_button && getCurrentTime() - start_time_pressed_button > short_press_time) {
             if (mode == 1) {
                 mode = 0;
-                send_message("Debug mode");
+                send_message("Run mode\r\n");
             } else {
                 mode = 1;
-                send_message("Run mode");
+                send_message("Debug mode\r\n");
             }
             sound_driver_volume_mute();
         }
@@ -193,18 +181,24 @@ void handle_note(int pressed_key){
     current_note = pressed_key - 1;
     all_notes_playing = 0;
     note_start_time = getCurrentTime();
+    snprintf(message, sizeof(message), "Current note: %d\r\n", pressed_key);
+    send_message(message);
 }
 
 void handle_octave(int value){
     if (octave == -4 && value < 0 || octave == 4 && value > 0)
         return;
     octave += value;
+    snprintf(message, sizeof(message), "Current octave: %d\r\n", octave);
+    send_message(message);
 }
 
 void handle_duration(int value){
     if (duration == 100 && value < 0 || duration == 10000 && value > 0)
         return;
     duration += value;
+    snprintf(message, sizeof(message), "Current duration: %d\r\n", duration);
+    send_message(message);
 }
 
 void handle_key(int pressed_key) {
@@ -235,6 +229,7 @@ void handle_key(int pressed_key) {
         case 12:
             all_notes_playing = 1;
             current_note = 0;
+            note_start_time = getCurrentTime();
     }
 }
 
@@ -250,10 +245,16 @@ void all_notes_next(){
     }
 }
 
-int calc_frequency(){
+uint32_t calc_frequency(){
+	uint32_t freq = 0;
     if (current_note < 0)
         return 1;
-    return notes[current_note] << octave;
+    if (octave >= 0){
+    	freq = notes[current_note] << octave;
+    } else {
+    	freq = notes[current_note] >> -octave;
+    }
+    return freq;
 }
 /* USER CODE END 0 */
 
@@ -263,69 +264,79 @@ int calc_frequency(){
   */
 int main(void)
 {
-    /* USER CODE BEGIN 1 */
+  /* USER CODE BEGIN 1 */
 
-    /* USER CODE END 1 */
+  /* USER CODE END 1 */
 
-    /* MCU Configuration--------------------------------------------------------*/
+  /* MCU Configuration--------------------------------------------------------*/
 
-    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-    HAL_Init();
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
 
-    /* USER CODE BEGIN Init */
+  /* USER CODE BEGIN Init */
 
-    /* USER CODE END Init */
+  /* USER CODE END Init */
 
-    /* Configure the system clock */
-    SystemClock_Config();
+  /* Configure the system clock */
+  SystemClock_Config();
 
-    /* USER CODE BEGIN SysInit */
+  /* USER CODE BEGIN SysInit */
 
-    /* USER CODE END SysInit */
+  /* USER CODE END SysInit */
 
-    /* Initialize all configured peripherals */
-    MX_GPIO_Init();
-    MX_USART6_UART_Init();
-    /* USER CODE BEGIN 2 */
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART6_UART_Init();
+  MX_I2C1_Init();
+  MX_TIM2_Init();
+  MX_TIM6_Init();
+  /* USER CODE BEGIN 2 */
+  buffer_init();
+  sound_driver_init();
+  /* USER CODE END 2 */
 
-    /* USER CODE END 2 */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
 
-    /* Infinite loop */
-    /* USER CODE BEGIN WHILE */
-    while (1)
-    {
-        int key_pressed = buffer_read();
+	  check_pressed_button();
 
-        if (mode) {
-            if (key_pressed > 0 && key_pressed < 13) {
-                snprintf(message, sizeof(message), "Pressed key: %d\r\n", key_pressed);
-                send_message(message);
-            }
-            continue;
-        }
+	  keyboard_read();
+	  int key_pressed = buffer_read();
 
-        handle_key(key_pressed);
+	          if (mode) {
+	              if (key_pressed > 0 && key_pressed < 13) {
+	                  snprintf(message, sizeof(message), "Pressed key: %d\r\n", key_pressed);
+	                  send_message(message);
+	              }
+	              continue;
+	          }
 
-        if (current_note == -1){
-            note_start_time = getCurrentTime();
-        } else {
-            if (getCurrentTime() - note_start_time < duration) {
-                if (getCurrentTime() - note_start_time < duration * 0.9) {
-                    sound_driver_set_frequency(calc_frequency());
-                    sound_driver_volume_on();
-                } else
-                    sound_driver_volume_mute();
-            } else {
-                sound_driver_volume_mute();
-            }
-        }
+	          handle_key(key_pressed);
 
-        break;
-        /* USER CODE END WHILE */
+	          if (current_note == -1){
+	              note_start_time = getCurrentTime();
+	          } else {
+	              if (getCurrentTime() - note_start_time < duration) {
+	                  if (getCurrentTime() - note_start_time < duration * 0.9) {
+	                      sound_driver_set_frequency(calc_frequency());
+	                      sound_driver_volume_on();
+	                  } else {
+	                      sound_driver_volume_mute();
+	                  	  all_notes_next();
+	                  }
+	              } else {
+	                  sound_driver_volume_mute();
+	                  all_notes_next();
+	              }
+	          }
 
-        /* USER CODE BEGIN 3 */
-    }
-    /* USER CODE END 3 */
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
 }
 
 /**
@@ -334,47 +345,41 @@ int main(void)
   */
 void SystemClock_Config(void)
 {
-    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-    RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-    /** Configure the main internal regulator output voltage
-    */
-    __HAL_RCC_PWR_CLK_ENABLE();
-    __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
-    /** Initializes the RCC Oscillators according to the specified parameters
-    * in the RCC_OscInitTypeDef structure.
-    */
-    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-    RCC_OscInitStruct.HSEState = RCC_HSE_ON;
-    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-    RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-    RCC_OscInitStruct.PLL.PLLM = 15;
-    RCC_OscInitStruct.PLL.PLLN = 216;
-    RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-    RCC_OscInitStruct.PLL.PLLQ = 4;
-    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-    {
-        Error_Handler();
-    }
-    /** Activate the Over-Drive mode
-    */
-    if (HAL_PWREx_EnableOverDrive() != HAL_OK)
-    {
-        Error_Handler();
-    }
-    /** Initializes the CPU, AHB and APB buses clocks
-    */
-    RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                                  |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-    RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
-    RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-    RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-    RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 25;
+  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
-    {
-        Error_Handler();
-    }
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  {
+    Error_Handler();
+  }
 }
 
 /* USER CODE BEGIN 4 */
@@ -387,13 +392,13 @@ void SystemClock_Config(void)
   */
 void Error_Handler(void)
 {
-    /* USER CODE BEGIN Error_Handler_Debug */
-    /* User can add his own implementation to report the HAL error return state */
-    __disable_irq();
-    while (1)
-    {
-    }
-    /* USER CODE END Error_Handler_Debug */
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
 }
 
 #ifdef  USE_FULL_ASSERT
