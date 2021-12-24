@@ -24,7 +24,7 @@ uint8_t read_row(uint8_t n_row) {
     }
 
     uint8_t buf = 0;
-    ret = PCA9538_Read_Inputs(KBRD_RD_ADDR, buf);
+    ret = PCA9538_Read_Inputs(KBRD_RD_ADDR, &buf);
     if (ret != HAL_OK) {
         send_message((uint8_t*) "Can't read column\r\n");
     }
