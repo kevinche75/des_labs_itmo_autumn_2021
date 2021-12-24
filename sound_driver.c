@@ -25,7 +25,7 @@ void sound_driver_set_frequency(uint32_t freq) {
 		arr *= 8;
 	}
     TIM2->PSC = (uint16_t)psc;
-    TIM2->ARR;
+    TIM2->ARR = arr;
 };
 
 void sound_driver_volume_on() {
