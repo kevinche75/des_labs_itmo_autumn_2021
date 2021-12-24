@@ -106,43 +106,28 @@ int check_rattling(){
 }
 
 void keyboard_read(void) {
-    static uint8_t const rows[4] = {0x1E, 0x3D, 0x7B, 0xF7};
-    static int current_row = 0;
-    static int row_result[4] = {0, 0, 0, 0};
-
-    if (ks_state == 0) {
-        if (row_result[current_row] != ks_result) {
-            uint8_t keyNum = 0;
-            if (ks_result & 1) {
-            	if (check_rattling())
-            		buffer_add(3 * current_row + 3);
-            }
-            if (ks_result & 2) {
-            	if (check_rattling())
-            		buffer_add(3 * current_row + 2);
-            }
-            if (ks_result & 4) {
-            	if (check_rattling())
-            		buffer_add(3 * current_row + 1);
-            }
+    
+    uint8_t column = 0;
+    
+    for (int i = 0; i < 4; i++){
+        uint8_t current_column = read_row(i);
+        if (column != 0 && current_column != 0){
+            return;
         }
-
-        row_result[current_row] = ks_result;
-        current_row = (current_row + 1) % 4;
-        ks_current_row = rows[current_row];
-        ks_continue();
+        column = current_column;
     }
-}
-
-void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef *hi2c) {
-    if (hi2c == &hi2c1 && ks_state) {
-        ks_continue();
+    
+    if (column & 1) {
+        if (check_rattling())
+            buffer_add(3 * current_row + 3);
     }
-}
-
-void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c) {
-    if (hi2c == &hi2c1 && ks_state) {
-        ks_continue();
+    if (column & 2) {
+        if (check_rattling())
+            buffer_add(3 * current_row + 2);
+    }
+    if (column & 4) {
+        if (check_rattling())
+            buffer_add(3 * current_row + 1);
     }
 }
 
