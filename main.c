@@ -106,28 +106,32 @@ int check_rattling(){
 }
 
 void keyboard_read(void) {
-    
+
     uint8_t column = 0;
-    
+    uint8_t row = 0;
+
     for (int i = 0; i < 4; i++){
         uint8_t current_column = read_row(i);
         if (column != 0 && current_column != 0){
             return;
         }
         column = current_column;
+        if (column !=0){
+            row = i;
+        }
     }
-    
+
     if (column & 1) {
         if (check_rattling())
-            buffer_add(3 * current_row + 3);
+            buffer_add(3 * row + 3);
     }
     if (column & 2) {
         if (check_rattling())
-            buffer_add(3 * current_row + 2);
+            buffer_add(3 * row + 2);
     }
     if (column & 4) {
         if (check_rattling())
-            buffer_add(3 * current_row + 1);
+            buffer_add(3 * row + 1);
     }
 }
 
